@@ -51,7 +51,7 @@ class Dataloader(utils.Sequence):
         'Generates data containing batch_size samples'  # X : (n_samples, *dim, n_channels)
         # Initialization
         X = np.empty((self.batch_size, *self.dim))
-        y = np.empty((self.batch_size, *(7, 7, 6)))
+        y = np.empty((self.batch_size, *(7, 7, 25)))
 
         # Generate data
         for i, path in enumerate(list_img_path):
@@ -70,7 +70,7 @@ class Dataloader(utils.Sequence):
 
     def GetLabel(self, label_path, img_h, img_w):
         f = open(label_path, 'r')
-        label = np.zeros((7, 7, 6), dtype=np.float32)
+        label = np.zeros((7, 7, 25), dtype=np.float32)
         while True:
             line = f.readline()
             if not line: break
@@ -86,7 +86,7 @@ class Dataloader(utils.Sequence):
             y = float(y)
             w = float(w)
             h = float(h)
-            c = float(c)
+            c = int(c)
 
             center_x = x + (w / 2.0)
             center_y = y + (h / 2.0)
@@ -105,6 +105,7 @@ class Dataloader(utils.Sequence):
             x_offset = (center_x / scale_factor) - grid_x_index
             y_offset = (center_y / scale_factor) - grid_y_index
 
-            label[grid_y_index][grid_x_index] = np.array([1, x_offset, y_offset, w, h, c])
+            label[grid_y_index][grid_x_index][c] = 1.
+            label[grid_y_index][grid_x_index][20:] = np.array([x_offset, y_offset, w, h, 1])
 
         return label
