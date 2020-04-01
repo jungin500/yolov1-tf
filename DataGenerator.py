@@ -4,14 +4,60 @@ import numpy as np
 import cv2
 from Decoder import LabelDecoder
 
+import imgaug as ia
+import imgaug.augmenters as iaa
+from PIL import Image
+
+
+def test_augmented_items(image_aug, bbs_aug):
+    bbs_aug = bbs_aug.remove_out_of_image()
+    bbs_aug = bbs_aug.clip_out_of_image()
+
+    Image.fromarray(bbs_aug.draw_on_image(np.array(image_aug)), 'RGB').show()
+    pass
+
+
+class Labeler():
+    def __init__(self, names_filename):
+        self.names_list = {}
+
+        with open(names_filename) as f:
+            idx = 0
+            for line in f:
+                self.names_list[idx] = line
+                idx += 1
+
+    def get_name(self, index):
+        return self.names_list[index]
+
 
 class Dataloader(utils.Sequence):
-    def __init__(self, file_name, dim=(448, 448, 3), batch_size=1, numClass=1, shuffle=True):
-        self.image_list, self.lable_list = self.GetDataList(file_name)
+    DEFAULT_AUGMENTER = iaa.SomeOf(2, [
+        iaa.Multiply((1.2, 1.5)),  # change brightness, doesn't affect BBs
+        iaa.Affine(
+            translate_px={"x": 20, "y": 50},
+            scale=(0.9, 0.9)
+        ),
+        iaa.Affine(
+            translate_px={"x": 100, "y": -200},
+            scale=(1.5, 1.2)
+        ),
+        iaa.AdditiveGaussianNoise(scale=0.1 * 255),
+        iaa.CoarseDropout(0.02, size_percent=0.15, per_channel=0.5),
+        iaa.Affine(rotate=45),
+        iaa.Affine(rotate=60),
+        iaa.Sharpen(alpha=0.5)
+    ])
+
+    def __init__(self, file_name, dim=(448, 448, 3), batch_size=1, numClass=1, augmentation=False, shuffle=True):
+        self.image_list, self.label_list = self.GetDataList(file_name)
         self.dim = dim
         self.batch_size = batch_size
         self.shuffle = shuffle
+        self.augmenter = self.DEFAULT_AUGMENTER if augmentation else False
+        self.augmenter_size = 4
         self.outSize = 5 + numClass
+        self.labeler = Labeler('voc.names')
         self.on_epoch_end()
 
     def __len__(self):
@@ -21,7 +67,7 @@ class Dataloader(utils.Sequence):
         indexes = self.indexes[idx * self.batch_size:(idx + 1) * self.batch_size]
 
         batch_x = [self.image_list[k] for k in indexes]
-        batch_y = [self.lable_list[k] for k in indexes]
+        batch_y = [self.label_list[k] for k in indexes]
 
         X, y = self.__data_generation(batch_x, batch_y)
 
@@ -41,36 +87,93 @@ class Dataloader(utils.Sequence):
         while True:
             line = f.readline()
             if not line: break
-            train_list.append(line)
+            train_list.append(line.replace("\n", ""))
             label_text = line.replace(".jpg", ".txt")
+            label_text = label_text.replace(
+                'C:\\Users\\jungin500\\Desktop\\Study\\2020-yolov3-impl\\VOCdevkit\\VOC2007\\JPEGImages\\',
+                "C:\\Users\\jungin500\\Desktop\\Study\\2020-yolov3-impl\\VOCyolo\\")
+            label_text = label_text.replace("\n", "")
             lable_list.append(label_text)
 
         return train_list, lable_list
 
+    def __convert_yololabel_to_iaabbs(self, yolo_raw_label, image_width=448, image_height=448):
+        # raw_label = [bboxes, 5], np.array([center_x, center_y, w, h, c])
+        return ia.BoundingBoxesOnImage([
+            ia.BoundingBox(
+                x1=(yolo_bbox[0] - (yolo_bbox[2] / 2)) * image_width,
+                y1=(yolo_bbox[1] - (yolo_bbox[3] / 2)) * image_height,
+                x2=(yolo_bbox[0] + (yolo_bbox[2] / 2)) * image_width,
+                y2=(yolo_bbox[1] + (yolo_bbox[3] / 2)) * image_height,
+                # label=class_list[int(yolo_bbox[0])] # Label을 id로 활용하자
+                label=yolo_bbox[4]
+            ) for yolo_bbox in yolo_raw_label
+        ], shape=(image_width, image_height))
+
+    def __convert_iaabbs_to_yololabel(self, iaa_bbs_out):
+        label = np.zeros((7, 7, 25), dtype=np.float32)
+        raw_label = []
+
+        for bbox in iaa_bbs_out.bounding_boxes:
+            center_x = bbox.center_x / 448
+            center_y = bbox.center_y / 448
+            width = bbox.width / 448
+            height = bbox.height / 448
+            class_id = int(float(bbox.label))  # Explicit
+
+            scale_factor = (1 / 7)
+
+            grid_x_index = int(center_x // scale_factor)
+            grid_y_index = int(center_y // scale_factor)
+            grid_x_index, grid_y_index = \
+                np.clip([grid_x_index, grid_y_index], a_min=0, a_max=6)
+
+            current_label = np.array([center_x, center_y, width, height, 1])
+
+            label[grid_y_index][grid_x_index][class_id] = 1.
+            label[grid_y_index][grid_x_index][20:] = current_label.copy()
+
+            current_label[4] = class_id
+            raw_label.append(current_label)
+
+        return label, np.array(raw_label)
+
     def __data_generation(self, list_img_path, list_label_path):
         'Generates data containing batch_size samples'  # X : (n_samples, *dim, n_channels)
         # Initialization
-        X = np.empty((self.batch_size, *self.dim))
-        y = np.empty((self.batch_size, *(7, 7, 25)))
+        if self.augmenter:
+            X = np.empty((self.batch_size * self.augmenter_size, *self.dim))
+            Y = np.empty((self.batch_size * self.augmenter_size, *(7, 7, 25)))
+        else:
+            X = np.empty((self.batch_size, *self.dim))
+            Y = np.empty((self.batch_size, *(7, 7, 25)))
 
         # Generate data
         for i, path in enumerate(list_img_path):
-            # Store sample
-            _img = cv2.imread(path)
-            img = cv2.resize(_img, (448, 448))
-            # cv2.imshow('Image', img)
-            # cv2.waitKey(0)
+            original_image = (np.array(Image.open(path).resize((448, 448))) / 255).astype(np.float32)
 
-            X[i,] = img / 255.
+            label, raw_label = self.GetLabel(list_label_path[i], original_image.shape[0], original_image.shape[1])
+            if self.augmenter:
+                iaa_bbs = self.__convert_yololabel_to_iaabbs(raw_label)
+                for aug_idx in range(self.augmenter_size):
+                    augmented_image, augmented_label = self.augmenter(
+                        image=(original_image * 255).astype(np.uint8),
+                        bounding_boxes=iaa_bbs
+                    )
+                    # test_augmented_items(augmented_image, augmented_label)
+                    X[aug_idx * self.batch_size + i,] = augmented_image / 255
+                    Y[aug_idx * self.batch_size + i,], augmented_raw_label = self.__convert_iaabbs_to_yololabel(
+                        augmented_label)
+            else:
+                X[i,] = original_image
+                Y[i,] = label
 
-            label = self.GetLabel(list_label_path[i], _img.shape[0], _img.shape[1])
-            y[i,] = label
-
-        return X, y
+        return X, Y
 
     def GetLabel(self, label_path, img_h, img_w):
         f = open(label_path, 'r')
         label = np.zeros((7, 7, 25), dtype=np.float32)
+        raw_label = []
         while True:
             line = f.readline()
             if not line: break
@@ -80,32 +183,29 @@ class Dataloader(utils.Sequence):
 
             split_line = line.split()
 
-            x, y, w, h, c = split_line
+            c, x, y, w, h = split_line
 
-            x = float(x)
-            y = float(y)
+            center_x = float(x)
+            center_y = float(y)
             w = float(w)
             h = float(h)
             c = int(c)
 
-            center_x = x + (w / 2.0)
-            center_y = y + (h / 2.0)
-
-            center_x = center_x * dw
-            center_y = center_y * dh
-
-            w = w * dw
-            h = h * dh
-
             scale_factor = (1 / 7)
+
             # // : 몫
             grid_x_index = int(center_x // scale_factor)
             grid_y_index = int(center_y // scale_factor)
 
-            x_offset = (center_x / scale_factor) - grid_x_index
-            y_offset = (center_y / scale_factor) - grid_y_index
+            current_label = np.array([center_x, center_y, w, h, 1])
 
             label[grid_y_index][grid_x_index][c] = 1.
-            label[grid_y_index][grid_x_index][20:] = np.array([x_offset, y_offset, w, h, 1])
+            label[grid_y_index][grid_x_index][20:] = current_label.copy()
 
-        return label
+            current_label[4] = c
+            raw_label.append(current_label)
+
+        return label, np.array(raw_label)
+
+    def GetLabelName(self, label_id):
+        return self.labeler.get_name(label_id)

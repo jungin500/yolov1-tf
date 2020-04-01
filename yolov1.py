@@ -201,15 +201,18 @@ def Yolov1Loss(y_true, y_pred):
 
     box_mask = K.cast(best_ious >= best_box, K.dtype(best_ious))  # ? * 7 * 7 * 2
 
+    # Loss 함수 4번 (with lambda_noobj 0.5)
     no_object_loss = 0.5 * (1 - box_mask * responsible_mask) * K.square(0 - predict_bbox_confidences)
+    # Loss 함수 3번 (without lambda_noobj)
     object_loss = box_mask * responsible_mask * K.square(1 - predict_bbox_confidences)
+
     confidence_loss = no_object_loss + object_loss
     confidence_loss = K.sum(confidence_loss)
 
-    # Loss 함수 3번
+    # Loss 함수 5번
     class_loss = responsible_mask * K.square(label_class - predict_class)
 
-    # Loss 함수 3번 총합
+    # Loss 함수 5번 총합
     class_loss = K.sum(class_loss)
 
     _label_box = K.reshape(label_box, [-1, 7, 7, 1, 4])

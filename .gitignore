@@ -1,3 +1,5 @@
 VOC2007/
 YOLO/
 __pycache__/
+checkpoint.h5
+VOCyolo/
