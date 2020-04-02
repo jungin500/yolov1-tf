@@ -71,7 +71,8 @@ class Dataloader(utils.Sequence):
 
         X, y = self.__data_generation(batch_x, batch_y)
 
-        return np.asarray(X), np.asarray(y)
+        # [None]: Tensorflow에서 사용함? 잘 모름
+        return np.asarray(X), np.asarray(y), [None]
 
     def on_epoch_end(self):
         'Updates indexes after each epoch'
@@ -101,13 +102,13 @@ class Dataloader(utils.Sequence):
         # raw_label = [bboxes, 5], np.array([center_x, center_y, w, h, c])
         return ia.BoundingBoxesOnImage([
             ia.BoundingBox(
-                x1=(yolo_bbox[0] - (yolo_bbox[2] / 2)) * image_width,
-                y1=(yolo_bbox[1] - (yolo_bbox[3] / 2)) * image_height,
-                x2=(yolo_bbox[0] + (yolo_bbox[2] / 2)) * image_width,
-                y2=(yolo_bbox[1] + (yolo_bbox[3] / 2)) * image_height,
+                x1=yolo_raw_bbox[0],
+                y1=yolo_raw_bbox[1],
+                x2=yolo_raw_bbox[2],
+                y2=yolo_raw_bbox[3],
                 # label=class_list[int(yolo_bbox[0])] # Label을 id로 활용하자
-                label=yolo_bbox[4]
-            ) for yolo_bbox in yolo_raw_label
+                label=yolo_raw_bbox[4]
+            ) for yolo_raw_bbox in yolo_raw_label
         ], shape=(image_width, image_height))
 
     def __convert_iaabbs_to_yololabel(self, iaa_bbs_out):
@@ -128,13 +129,14 @@ class Dataloader(utils.Sequence):
             grid_x_index, grid_y_index = \
                 np.clip([grid_x_index, grid_y_index], a_min=0, a_max=6)
 
-            current_label = np.array([center_x, center_y, width, height, 1])
+            relative_coord = [center_x * 7, center_y * 7]
+            relative_center_x = relative_coord[0] - int(relative_coord[0])
+            relative_center_y = relative_coord[1] - int(relative_coord[1])
 
             label[grid_y_index][grid_x_index][class_id] = 1.
-            label[grid_y_index][grid_x_index][20:] = current_label.copy()
+            label[grid_y_index][grid_x_index][20:] = np.array([relative_center_x, relative_center_y, width, height, 1])
 
-            current_label[4] = class_id
-            raw_label.append(current_label)
+            raw_label.append(np.array([center_x, center_y, width, height, class_id]))
 
         return label, np.array(raw_label)
 
@@ -152,6 +154,7 @@ class Dataloader(utils.Sequence):
         for i, path in enumerate(list_img_path):
             original_image = (np.array(Image.open(path).resize((448, 448))) / 255).astype(np.float32)
 
+            # raw_label은 x_1, y_1, x_2, y_2, c를 가지고 있다.
             label, raw_label = self.GetLabel(list_label_path[i], original_image.shape[0], original_image.shape[1])
             if self.augmenter:
                 iaa_bbs = self.__convert_yololabel_to_iaabbs(raw_label)
@@ -162,8 +165,8 @@ class Dataloader(utils.Sequence):
                     )
                     # test_augmented_items(augmented_image, augmented_label)
                     X[aug_idx * self.batch_size + i,] = augmented_image / 255
-                    Y[aug_idx * self.batch_size + i,], augmented_raw_label = self.__convert_iaabbs_to_yololabel(
-                        augmented_label)
+                    Y[aug_idx * self.batch_size + i,], augmented_raw_label = \
+                        self.__convert_iaabbs_to_yololabel(augmented_label.remove_out_of_image().clip_out_of_image())
             else:
                 X[i,] = original_image
                 Y[i,] = label
@@ -185,8 +188,8 @@ class Dataloader(utils.Sequence):
 
             c, x, y, w, h = split_line
 
-            center_x = float(x)
-            center_y = float(y)
+            x = float(x)
+            y = float(y)
             w = float(w)
             h = float(h)
             c = int(c)
@@ -194,16 +197,25 @@ class Dataloader(utils.Sequence):
             scale_factor = (1 / 7)
 
             # // : 몫
-            grid_x_index = int(center_x // scale_factor)
-            grid_y_index = int(center_y // scale_factor)
+            grid_x_index = int(x // scale_factor)
+            grid_y_index = int(y // scale_factor)
 
-            current_label = np.array([center_x, center_y, w, h, 1])
+            # x, y는 해당 셀 내에서의
+            # 상대적 위치를 가지고 간다.
+            grid_idx = [x * 7, y * 7]
+            x_relative = grid_idx[0] - int(grid_idx[0])
+            y_relative = grid_idx[1] - int(grid_idx[1])
 
             label[grid_y_index][grid_x_index][c] = 1.
-            label[grid_y_index][grid_x_index][20:] = current_label.copy()
+            label[grid_y_index][grid_x_index][20:] = np.array([x_relative, y_relative, w, h, 1])
 
-            current_label[4] = c
-            raw_label.append(current_label)
+            raw_label.append(np.array([
+                int((x - w / 2) * 448),
+                int((y - h / 2) * 448),
+                int((x + w / 2) * 448),
+                int((y + h / 2) * 448),
+                c
+            ]))
 
         return label, np.array(raw_label)
 

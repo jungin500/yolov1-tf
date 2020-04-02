@@ -79,6 +79,10 @@ def postprocess_non_nms_result(input_image, network_output):
                     continue
 
                 (x_c, y_c, w, h) = bbox
+
+                x_c, y_c = [x_c + x, y_c + y]
+                x_c, y_c = [x_c / 7, y_c / 7]
+
                 x_1 = (x_c - (w / 2)) * 448
                 y_1 = (y_c - (h / 2)) * 448
                 x_2 = (x_c + (w / 2)) * 448
@@ -139,18 +143,41 @@ def postprocess_result(input_image, network_output):
     #
     #     nms_selected = tf.gather(single_class_score, selected_indices)
 
-# train_data = Dataloader(file_name='manifest_train.txt', numClass=20, batch_size=4)
-# valid_train_data = Dataloader(file_name='manifest_valid.txt', numClass=20, batch_size=4)
-# test_data = Dataloader(file_name='manifest_test.txt', numClass=20, batch_size=4)
-dev_data = Dataloader(file_name='manifest_two.txt', numClass=20, batch_size=2, augmentation=True)
-train_data = dev_data
-valid_train_data = dev_data
-test_data = dev_data
+
+GLOBAL_EPOCHS = 5
+SAVE_PERIOD_EPOCHS = 1
+# CHECKPOINT_FILENAME = 'checkpoint.h5'
+# CHECKPOINT_FILENAME = "saved-model-a2ae-{epoch:02d}.hdf5"
+CHECKPOINT_FILENAME = "yolov1-training.hdf5"
+MODE_TRAIN = True
+LOAD_WEIGHT = True
+'''
+    Learning Rate에 대한 고찰
+    - 다양한 Augmentation이 활성화되어 있을 시, 2e-5  (loss: 100 언저리까지 가능)
+    - Augmentation 비활성화 시, 1e-4: loss 20 언저리까지 가능
+    - 1e-5: 20 언저리까지 떨어진 이후
+'''
+LEARNING_RATE = 5e-6
+DECAY_RATE = 5e-5
+thresh1 = 0.2
+thresh2 = 0.2
+
+train_data = Dataloader(file_name='manifest_train.txt', numClass=20, batch_size=8, augmentation=True)
+train_data_no_augmentation = Dataloader(file_name='manifest_train.txt', numClass=20, batch_size=4, augmentation=False)
+valid_train_data = Dataloader(file_name='manifest_valid.txt', numClass=20, batch_size=2)
+test_data = Dataloader(file_name='manifest_test.txt', numClass=20, batch_size=4)
+dev_data = Dataloader(file_name='manifest_two.txt', numClass=20, batch_size=2, augmentation=False)
+
+TARGET_TRAIN_DATA = train_data_no_augmentation
+# train_data = dev_data
+# valid_train_data = dev_data
+# test_data = dev_data
 
 model = Yolov1Model()
-optimizer = Adam(learning_rate=1e-5, decay=5e-4)
-
+optimizer = Adam(learning_rate=LEARNING_RATE, decay=DECAY_RATE)
 model.compile(optimizer=optimizer, loss=Yolov1Loss)
+# 기본 Adam Optimizer는 Loss가 무지막지하게 올라간다....!
+# model.compile(optimizer='adam', loss=Yolov1Loss)
 
 # model.summary()
 # plot_model(model, to_file='model.png')
@@ -158,22 +185,19 @@ model.compile(optimizer=optimizer, loss=Yolov1Loss)
 # cv2.imshow("image", model_image)
 # cv2.waitKey(0)
 
-GLOBAL_EPOCHS = 200
-SAVE_PERIOD = GLOBAL_EPOCHS / 2
-CHECKPOINT_FILENAME = 'checkpoint.h5'
-MODE_TRAIN = False
-LOAD_WEIGHT = True
-
-thresh1 = 0.2
-thresh2 = 0.2
-
+save_frequency = int(
+    SAVE_PERIOD_EPOCHS * TARGET_TRAIN_DATA.__len__() / TARGET_TRAIN_DATA.batch_size *
+    (1 if TARGET_TRAIN_DATA.augmenter else TARGET_TRAIN_DATA.augmenter_size)
+)
+print("Save frequency is {} sample, batch_size={}.".format(save_frequency, TARGET_TRAIN_DATA.batch_size))
 
 save_best_model = ModelCheckpoint(
     CHECKPOINT_FILENAME,
     save_best_only=True,
     save_weights_only=True,
-    save_freq='epoch',
-    period=SAVE_PERIOD
+    monitor='loss',
+    mode='min',
+    save_freq=save_frequency
 )
 
 if LOAD_WEIGHT:
@@ -181,11 +205,12 @@ if LOAD_WEIGHT:
 
 if MODE_TRAIN:
     model.fit(
-        train_data,
+        TARGET_TRAIN_DATA,
         epochs=GLOBAL_EPOCHS,
-        validation_data=train_data,
-        shuffle=False,
-        callbacks=[save_best_model]
+        validation_data=valid_train_data,
+        shuffle=True,
+        callbacks=[save_best_model],
+        verbose=1
     )
 else:
     import random
@@ -193,7 +218,7 @@ else:
     data_iterations = 1
     result_set = []
     for _ in range(data_iterations):
-        image, _ = train_data.__getitem__(random.randrange(0, train_data.__len__()))
+        image, _, _ = test_data.__getitem__(random.randrange(0, test_data.__len__()))
         result = model.predict(image)
         postprocess_non_nms_result(image, result)
 

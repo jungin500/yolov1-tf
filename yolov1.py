@@ -228,7 +228,7 @@ def Yolov1Loss(y_true, y_pred):
     box_loss = 5 * box_mask * responsible_mask * K.square((label_xy - predict_xy) / 448)
 
     # Loss 함수 2번
-    box_loss += 5 * box_mask * responsible_mask * K.square((K.sqrt(label_wh) - K.sqrt(predict_wh)) / 448)
+    box_loss += 5 * box_mask * responsible_mask * K.square(K.sqrt(label_wh) - K.sqrt(predict_wh)) / 448
 
     # 1번+2번 총합
     box_loss = K.sum(box_loss)
