@@ -33,21 +33,16 @@ class Labeler():
 
 class Dataloader(utils.Sequence):
     DEFAULT_AUGMENTER = iaa.SomeOf(2, [
-        iaa.Multiply((1.2, 1.5)),  # change brightness, doesn't affect BBs
-        iaa.Affine(
-            translate_px={"x": 20, "y": 50},
+    iaa.Multiply((1.2, 1.5)),  # change brightness, doesn't affect BBs
+    iaa.Affine(
+            translate_px={"x": 3, "y": 10},
             scale=(0.9, 0.9)
-        ),
-        iaa.Affine(
-            translate_px={"x": 100, "y": -200},
-            scale=(1.5, 1.2)
-        ),
-        iaa.AdditiveGaussianNoise(scale=0.1 * 255),
-        iaa.CoarseDropout(0.02, size_percent=0.15, per_channel=0.5),
-        iaa.Affine(rotate=45),
-        iaa.Affine(rotate=60),
-        iaa.Sharpen(alpha=0.5)
-    ])
+    ),  # translate by 40/60px on x/y axis, and scale to 50-70%, affects BBs
+    iaa.AdditiveGaussianNoise(scale=0.1 * 255),
+    iaa.CoarseDropout(0.02, size_percent=0.15, per_channel=0.5),
+    iaa.Affine(rotate=45),
+    iaa.Sharpen(alpha=0.5)
+])
 
     def __init__(self, file_name, dim=(448, 448, 3), batch_size=1, numClass=1, augmentation=False, shuffle=True):
         self.image_list, self.label_list = self.GetDataList(file_name)
@@ -158,7 +153,7 @@ class Dataloader(utils.Sequence):
             label, raw_label = self.GetLabel(list_label_path[i], original_image.shape[0], original_image.shape[1])
             if self.augmenter:
                 iaa_bbs = self.__convert_yololabel_to_iaabbs(raw_label)
-                for aug_idx in range(self.augmenter_size):
+                for aug_idx in range(self.augmenter_size - 1):
                     augmented_image, augmented_label = self.augmenter(
                         image=(original_image * 255).astype(np.uint8),
                         bounding_boxes=iaa_bbs
@@ -167,6 +162,10 @@ class Dataloader(utils.Sequence):
                     X[aug_idx * self.batch_size + i,] = augmented_image / 255
                     Y[aug_idx * self.batch_size + i,], augmented_raw_label = \
                         self.__convert_iaabbs_to_yololabel(augmented_label.remove_out_of_image().clip_out_of_image())
+
+                # 마지막 items는 non-augmented images이다.
+                X[self.augmenter_size - 1 + i,] = original_image
+                Y[self.augmenter_size - 1 + i,] = label
             else:
                 X[i,] = original_image
                 Y[i,] = label
