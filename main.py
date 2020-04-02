@@ -156,6 +156,7 @@ LOAD_WEIGHT = True
     - 다양한 Augmentation이 활성화되어 있을 시, 2e-5  (loss: 100 언저리까지 가능)
     - Augmentation 비활성화 시, 1e-4: loss 20 언저리까지 가능
     - 1e-5: 20 언저리까지 떨어진 이후
+    - Augmentation 비활성화 시, 시작부터 5e-6: 23까지는 잘 떨어짐
 '''
 LEARNING_RATE = 5e-6
 DECAY_RATE = 5e-5
