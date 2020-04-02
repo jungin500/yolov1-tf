@@ -164,8 +164,8 @@ class Dataloader(utils.Sequence):
                         self.__convert_iaabbs_to_yololabel(augmented_label.remove_out_of_image().clip_out_of_image())
 
                 # 마지막 items는 non-augmented images이다.
-                X[self.augmenter_size - 1 + i,] = original_image
-                Y[self.augmenter_size - 1 + i,] = label
+                X[(self.augmenter_size - 1) * self.batch_size + i,] = original_image
+                Y[(self.augmenter_size - 1) * self.batch_size + i,] = label
             else:
                 X[i,] = original_image
                 Y[i,] = label
