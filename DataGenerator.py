@@ -71,8 +71,8 @@ class Dataloader(utils.Sequence):
 
         X, y = self.__data_generation(batch_x, batch_y)
 
-        # [None]: Tensorflow에서 사용함? 잘 모름
-        return np.asarray(X), np.asarray(y), [None]
+        # 마지막에 [None]을 넣는 것은... 다른 버전에서 동작하지 않는다
+        return np.asarray(X), np.asarray(y)
 
     def on_epoch_end(self):
         'Updates indexes after each epoch'

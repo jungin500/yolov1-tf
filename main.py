@@ -223,3 +223,4 @@ else:
         postprocess_non_nms_result(image, result)
 
     print(result_set)
+
