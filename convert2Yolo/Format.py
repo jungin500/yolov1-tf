@@ -589,6 +589,7 @@ class YOLO:
         w = w * dw
         y = y * dh
         h = h * dh
+
         return (round(x,3), round(y,3), round(w,3), round(h,3))
 
     def parse(self, label_path, img_path, img_type=".png"):
