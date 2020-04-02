@@ -1,2 +1,0 @@
-C:\Users\jungin500\Desktop\Study\2020-yolov3-impl\VOCdevkit\VOC2007\JPEGImages\000001.jpg
-C:\Users\jungin500\Desktop\Study\2020-yolov3-impl\VOCdevkit\VOC2007\JPEGImages\000002.jpg
