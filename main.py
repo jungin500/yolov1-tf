@@ -162,11 +162,11 @@ DECAY_RATE = 5e-5
 thresh1 = 0.2
 thresh2 = 0.2
 
-train_data = Dataloader(file_name='manifest_train.txt', numClass=20, batch_size=8, augmentation=True)
-train_data_no_augmentation = Dataloader(file_name='manifest_train.txt', numClass=20, batch_size=4, augmentation=False)
-valid_train_data = Dataloader(file_name='manifest_valid.txt', numClass=20, batch_size=2)
-test_data = Dataloader(file_name='manifest_test.txt', numClass=20, batch_size=4)
-dev_data = Dataloader(file_name='manifest_two.txt', numClass=20, batch_size=2, augmentation=False)
+train_data = Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=8, augmentation=True)
+train_data_no_augmentation = Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=4, augmentation=False)
+valid_train_data = Dataloader(file_name='manifest-valid.txt', numClass=20, batch_size=2)
+test_data = Dataloader(file_name='manifest-test.txt', numClass=20, batch_size=4)
+# dev_data = Dataloader(file_name='manifest_two.txt', numClass=20, batch_size=2, augmentation=False)
 
 TARGET_TRAIN_DATA = train_data_no_augmentation
 # train_data = dev_data
