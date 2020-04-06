@@ -14,6 +14,10 @@ from tensorflow.keras.utils import plot_model
 from yolov1 import Yolov1Model, Yolov1Loss, INPUT_LAYER
 from DataGenerator import Dataloader
 
+from tensorflow.keras.layers import Input
+from tensorflow.keras import Model
+from yolo_loss_gh import model_tiny_yolov1
+
 
 def convert_yolobbox_tfbbox(yolo_bbox, image_size=448):
     """
@@ -30,9 +34,10 @@ def convert_yolobbox_tfbbox(yolo_bbox, image_size=448):
         (yolo_bbox[:, :, :, 0] + yolo_bbox[:, :, :, 2] / 2) * image_size
     ], axis=3)
 
+import random
 
 # result: 1 * 7 * 7 * 30
-def postprocess_non_nms_result(input_image, network_output):
+def postprocess_non_nms_result(input_image, network_output, no_suppress=False, display_all=True):
     classes = network_output[:, :, :, :20]
     confidence_1, confidence_2 = network_output[:, :, :, 20], network_output[:, :, :, 21]
     bbox_1, bbox_2 = network_output[:, :, :, 22:26], network_output[:, :, :, 26:30]
@@ -52,6 +57,10 @@ def postprocess_non_nms_result(input_image, network_output):
 
     batch_size = np.shape(input_image)[0]
     for batch in range(batch_size):
+        if not display_all:
+            if random.randrange(2) == 1:
+                continue
+
         input_image_single = input_image[batch]
         input_image_pil = Image.fromarray((input_image_single * 255).astype(np.uint8), 'RGB')
         input_image_draw = ImageDraw.Draw(input_image_pil)
@@ -59,7 +68,7 @@ def postprocess_non_nms_result(input_image, network_output):
         for y in range(7):
             for x in range(7):
                 first_bigger = class_score_bbox_1_max_score[batch][y][x] > class_score_bbox_2_max_score[batch][y][x]
-                if (first_bigger and class_score_bbox_1_max_score[batch][y][x] == 0) and (
+                if not no_suppress and (first_bigger and class_score_bbox_1_max_score[batch][y][x] == 0) and (
                         not first_bigger and class_score_bbox_2_max_score[batch][y][x] == 0):
                     continue
 
@@ -75,7 +84,7 @@ def postprocess_non_nms_result(input_image, network_output):
                     class_score_bbox = class_score_bbox_2_max_score[batch][y][x]
                     bbox = bbox_2[batch][y][x]
 
-                if class_score_bbox < thresh2:
+                if not no_suppress and class_score_bbox < thresh2:
                     continue
 
                 (x_c, y_c, w, h) = bbox
@@ -95,62 +104,83 @@ def postprocess_non_nms_result(input_image, network_output):
         input_image_pil.show(title="Sample Image")
 
 
-# result: 1 * 7 * 7 * 30
-def postprocess_result(input_image, network_output):
-    classes = network_output[:, :, :, :20]
-    confidence_1, confidence_2 = network_output[:, :, :, 20], network_output[:, :, :, 21]
-    bbox_1, bbox_2 = network_output[:, :, :, 22:26], network_output[:, :, :, 26:30]
-
-    class_score_bbox_1 = np.expand_dims(confidence_1, axis=3) * classes
-    class_score_bbox_2 = np.expand_dims(confidence_2, axis=3) * classes
-    class_scores = np.stack([class_score_bbox_1, class_score_bbox_2], axis=3)  # 1 * 7 * 7 * 2 * 20
-
-    # 문제없이 작동하는 부분
-    class_scores = np.reshape(class_scores, [-1, 20])  # 98(7 * 7 * 2) * 20
-
-    # Set zero if score < thresh1 (0.2)
-    class_scores[np.where(class_scores < thresh1)] = 0.
-
-    return  # invalid return here!
-
-    # for class_id in range(np.shape(class_scores)[1]):
-    #     # Sort in Descending order - intermediate value, not a reference
-    #     k = class_scores[class_scores[:, 0].argsort()[::-1], 0]
-
-    # NMS: check bbox_max
-
-    # Sort descending by its scores
-
-    # apply NMS with Tensorflow...
-    # tf_nms_boxes1, tf_nms_boxes2 = convert_yolobbox_tfbbox(bbox_1), convert_yolobbox_tfbbox(bbox_2)
-    # tf_nms_boxes = np.stack([tf_nms_boxes1, tf_nms_boxes2], axis=3)
-    # tf_nms_boxes = np.reshape(tf_nms_boxes, [-1, 4])  # 98 * 4
-    #
-    # bbox_to_draw = np.empty(shape=(1, 7, 7, 2, 4))
-    # for class_id in range(np.shape(class_scores)[1]):
-    #     # class_id는 0부터 19까지 (클래스 개수만큼) 진행
-    #     single_class_score = class_scores[:, class_id]
-    #
-    #     selected_indices = tf.image.non_max_suppression(
-    #         boxes=tf_nms_boxes,
-    #         scores=single_class_score,
-    #         iou_threshold=0.5,
-    #         max_output_size=tf.convert_to_tensor(2)
-    #     )
-    #
-    #     print(selected_indices)
-    #     print(selected_indices.shape)
-    #
-    #     nms_selected = tf.gather(single_class_score, selected_indices)
+def create_index_map(begin, end=None, shape=(1, 7, 7, 1)):
+    base_range = tf.range(begin, end)
+    reshaped_tiles = tf.reshape(base_range, shape)
+    return tf.cast(reshaped_tiles, tf.float32)
 
 
-GLOBAL_EPOCHS = 5
-SAVE_PERIOD_EPOCHS = 1
+def yolov1_precision(y_true, y_pred):
+    label_class = y_true[..., :20]  # ? * 7 * 7 * 20
+    label_box = y_true[..., 20:24]  # ? * 7 * 7 * 4
+    responsible_mask = y_true[..., 24]  # ? * 7 * 7
+
+    predict_class = y_pred[..., :20]  # ? * 7 * 7 * 20
+    predict_bbox_confidences = y_pred[..., 20:22]  # ? * 7 * 7 * 2
+    predict_box = y_pred[..., 22:]  # ? * 7 * 7 * 8
+
+    predict_class_probabilities_bbox_1 = predict_class * predict_bbox_confidences[..., 0:1]
+    predict_class_probabilities_bbox_2 = predict_class * predict_bbox_confidences[..., 1:2]
+
+    # Interleave two probs in memory
+    predict_class_probabilities = tf.reshape(
+        tf.stack(
+            [predict_class_probabilities_bbox_1, predict_class_probabilities_bbox_2],
+            axis=3
+        ),
+        (-1, 98, 20)
+    )
+
+    # Set zero if score < thresh1
+    predict_class_probabilities = tf.where(
+        predict_class_probabilities < thresh1,
+        0,
+        predict_class_probabilities
+    )
+
+    # Sort descending
+    index_map = create_index_map(98, shape=(1, 98, 1))
+
+    '''
+        <tf.Tensor: shape=(1, 98, 21), dtype=float32, numpy=
+        array([[[ 0.,  1.,  1., ...,  1.,  1.,  1.],
+                [ 1.,  2.,  2., ...,  2.,  2.,  2.],
+                [ 2.,  1.,  1., ...,  1.,  1.,  1.],
+                ...,
+                [95.,  2.,  2., ...,  2.,  2.,  2.],
+                [96.,  1.,  1., ...,  1.,  1.,  1.],
+                [97.,  2.,  2., ...,  2.,  2.,  2.]]], dtype=float32)>
+    '''
+    classprob_bbox_mapped = tf.concat([index_map, predict_class_probabilities], axis=2)
+
+    # 0번째는 index이다...
+    tf.argmax()
+
+GLOBAL_EPOCHS = 4000
+# SAVE_PERIOD_EPOCHS = 100
+SAVE_PERIOD_SAMPLES = 200
 # CHECKPOINT_FILENAME = 'checkpoint.h5'
 # CHECKPOINT_FILENAME = "saved-model-a2ae-{epoch:02d}.hdf5"
-CHECKPOINT_FILENAME = "yolov1-training.hdf5"
+CHECKPOINT_FILENAME = "yolov1-voc2007-technique.hdf5"
+MODEL_SAVE = True
 MODE_TRAIN = True
-LOAD_WEIGHT = True
+INTERACTIVE_TRAIN = True
+LOAD_WEIGHT = False
+
+train_data = Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=8, augmentation=True)
+train_data_no_augmentation = Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=4, augmentation=False)
+valid_train_data = Dataloader(file_name='manifest-valid.txt', numClass=20, batch_size=2)
+test_data = Dataloader(file_name='manifest-test.txt', numClass=20, batch_size=2)
+train_two_data = Dataloader(file_name='manifest-two.txt', numClass=20, batch_size=2, augmentation=False)
+dev_data = Dataloader(file_name='manifest-two.txt', numClass=20, batch_size=2, augmentation=False)
+dev_32_data = Dataloader(file_name='manifest-eight.txt', numClass=20, batch_size=8, augmentation=True)
+
+TARGET_TRAIN_DATA = train_two_data
+# train_data = dev_data
+valid_train_data = train_two_data
+# test_data = dev_data
+
+
 '''
     Learning Rate에 대한 고찰
     - 다양한 Augmentation이 활성화되어 있을 시, 2e-5  (loss: 100 언저리까지 가능)
@@ -163,34 +193,28 @@ DECAY_RATE = 5e-5
 thresh1 = 0.2
 thresh2 = 0.2
 
-train_data = Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=8, augmentation=True)
-train_data_no_augmentation = Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=4, augmentation=False)
-valid_train_data = Dataloader(file_name='manifest-valid.txt', numClass=20, batch_size=2)
-test_data = Dataloader(file_name='manifest-test.txt', numClass=20, batch_size=4)
-# dev_data = Dataloader(file_name='manifest_two.txt', numClass=20, batch_size=2, augmentation=False)
+input_shape = (448, 448, 3)
+inputs = Input(input_shape)
+yolo_outputs = model_tiny_yolov1(inputs)
+model = Model(inputs=inputs, outputs=yolo_outputs)
 
-TARGET_TRAIN_DATA = train_data_no_augmentation
-# train_data = dev_data
-# valid_train_data = dev_data
-# test_data = dev_data
+# model = Yolov1Model()
+# optimizer = Adam(learning_rate=LEARNING_RATE, decay=DECAY_RATE)
+# model.compile(optimizer=optimizer, loss=Yolov1Loss) # , metrics=[yolov1_precision])
 
-model = Yolov1Model()
-optimizer = Adam(learning_rate=LEARNING_RATE, decay=DECAY_RATE)
-model.compile(optimizer=optimizer, loss=Yolov1Loss)
-# 기본 Adam Optimizer는 Loss가 무지막지하게 올라간다....!
-# model.compile(optimizer='adam', loss=Yolov1Loss)
-
+model.compile(optimizer='adam', loss=Yolov1Loss)
 # model.summary()
 # plot_model(model, to_file='model.png')
 # model_image = cv2.imread('model.png')
 # cv2.imshow("image", model_image)
 # cv2.waitKey(0)
 
-save_frequency = int(
-    SAVE_PERIOD_EPOCHS * TARGET_TRAIN_DATA.__len__() / TARGET_TRAIN_DATA.batch_size *
-    (1 if TARGET_TRAIN_DATA.augmenter else TARGET_TRAIN_DATA.augmenter_size)
-)
-print("Save frequency is {} sample, batch_size={}.".format(save_frequency, TARGET_TRAIN_DATA.batch_size))
+# save_frequency = int(
+#     SAVE_PERIOD_EPOCHS * TARGET_TRAIN_DATA.__len__() / TARGET_TRAIN_DATA.batch_size *
+#     (1 if TARGET_TRAIN_DATA.augmenter else TARGET_TRAIN_DATA.augmenter_size)
+# )
+save_frequency_raw = SAVE_PERIOD_SAMPLES
+print("Save frequency is {} sample, batch_size={}.".format(save_frequency_raw, TARGET_TRAIN_DATA.batch_size))
 
 save_best_model = ModelCheckpoint(
     CHECKPOINT_FILENAME,
@@ -198,30 +222,55 @@ save_best_model = ModelCheckpoint(
     save_weights_only=True,
     monitor='loss',
     mode='min',
-    save_freq=save_frequency
+    # save_freq=save_frequency
+    save_freq=save_frequency_raw
 )
 
 if LOAD_WEIGHT:
     model.load_weights(CHECKPOINT_FILENAME)
 
+
 if MODE_TRAIN:
-    model.fit(
-        TARGET_TRAIN_DATA,
-        epochs=GLOBAL_EPOCHS,
-        validation_data=valid_train_data,
-        shuffle=True,
-        callbacks=[save_best_model],
-        verbose=1
-    )
+    if INTERACTIVE_TRAIN:
+        import random
+
+        epoch_divide_by = 5
+        epoch_iteration = 0
+        while epoch_iteration * (GLOBAL_EPOCHS / epoch_divide_by) < GLOBAL_EPOCHS:
+            # Train <GLOBAL_EPOCHS / epoch_divide_by> epoches
+
+            image, _ = TARGET_TRAIN_DATA.__getitem__(random.randrange(0, TARGET_TRAIN_DATA.__len__()))
+            result = model.predict(image)
+            postprocess_non_nms_result(image, result, no_suppress=False, display_all=True)
+
+            model.fit(
+                TARGET_TRAIN_DATA,
+                epochs=int(GLOBAL_EPOCHS / epoch_divide_by),
+                validation_data=TARGET_TRAIN_DATA,
+                shuffle=True,
+                callbacks=[save_best_model],
+                verbose=1
+            )
+
+            epoch_iteration += 1
+    else:
+        model.fit(
+            TARGET_TRAIN_DATA,
+            epochs=GLOBAL_EPOCHS,
+            validation_data=TARGET_TRAIN_DATA,
+            shuffle=True,
+            callbacks=[save_best_model] if MODEL_SAVE else None,
+            verbose=1
+        )
 else:
     import random
 
-    data_iterations = 1
-    result_set = []
+    data_iterations = 4
     for _ in range(data_iterations):
-        image, _, _ = test_data.__getitem__(random.randrange(0, test_data.__len__()))
+        image, label = TARGET_TRAIN_DATA.__getitem__(random.randrange(0, TARGET_TRAIN_DATA.__len__()))
         result = model.predict(image)
-        postprocess_non_nms_result(image, result)
+        # postprocess_calculate_precision(result, label)
+        postprocess_non_nms_result(image, result, no_suppress=False)
 
-    print(result_set)
+
 

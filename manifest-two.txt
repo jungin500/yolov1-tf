@@ -1,0 +1,2 @@
+C:\Users\jungin500\Desktop\Study\2020-yolov1-impl\VOC2007\JPEGImages\005970.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov1-impl\VOC2007\JPEGImages\005971.jpg

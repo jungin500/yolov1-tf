@@ -1,15 +1,25 @@
 from tensorflow.keras import Model
 from tensorflow.keras.layers import Conv2D, MaxPool2D, GlobalAveragePooling2D, Dense, BatchNormalization, Input, \
-    LeakyReLU, Reshape, Flatten
+    LeakyReLU, Reshape, Flatten, Lambda, Layer
+from tensorflow.keras.regularizers import l2
 
 
 def LeakyConvBlock(input, filter_size, kernel_size, strides=(1, 1)):
-    x = Conv2D(filter_size, kernel_size=kernel_size, strides=strides, padding='same', activation=None)(input)
+    x = Conv2D(
+        filter_size,
+        kernel_size=kernel_size,
+        strides=strides,
+        padding='same',
+        use_bias=False,               # 추가
+        kernel_regularizer=l2(5e-4),  # 추가
+        # activation=None,            # 삭제
+    )(input)
+    # x = BatchNormalization()(x)
     return LeakyReLU(alpha=0.1)(x)
 
 
 def LeakyMaxpoolBlock(input):
-    x = MaxPool2D()(input)
+    x = MaxPool2D(padding='same')(input)
     return LeakyReLU(alpha=0.1)(x)
 
 
@@ -33,6 +43,38 @@ def DualLeakyConvBlock(input):
     return x
 
 
+class Yolo_Reshape(Layer):
+    def __init__(self, target_shape, **kwargs):
+        super(Yolo_Reshape, self).__init__(**kwargs)
+        self.target_shape = tuple(target_shape)
+
+    def compute_output_shape(self, input_shape):
+        return (input_shape[0],) + self.target_shape
+
+    def call(self, inputs, **kwargs):
+        S = [self.target_shape[0], self.target_shape[1]]
+        C = 20
+        B = 2
+        idx1 = S[0] * S[1] * C
+        idx2 = idx1 + S[0] * S[1] * B
+        # class prediction
+        class_probs = K.reshape(
+            inputs[:, :idx1], (K.shape(inputs)[0],) + tuple([S[0], S[1], C]))
+        class_probs = K.softmax(class_probs)
+        # confidence
+        confs = K.reshape(
+            inputs[:, idx1:idx2], (K.shape(inputs)[0],) + tuple([S[0], S[1], B]))
+        confs = K.sigmoid(confs)
+        # boxes
+        boxes = K.reshape(
+            inputs[:, idx2:], (K.shape(inputs)[0],) + tuple([S[0], S[1], B * 4]))
+        boxes = K.sigmoid(boxes)
+        # return np.array([class_probs, confs, boxes])
+        outputs = K.concatenate([class_probs, confs, boxes])
+        return outputs
+
+
+
 INPUT_LAYER = Input(shape=(448, 448, 3))
 
 def Yolov1Model():
@@ -41,12 +83,12 @@ def Yolov1Model():
     # 1번째
     x = LeakyConvBlock(inputs, filter_size=64, kernel_size=7, strides=2)
     # x = LeakyMaxpoolBlock(x)  # MaxPool 이후에는 LRELU를 사용하지 않는다?
-    x = MaxPool2D()(x)
+    x = MaxPool2D(padding='same')(x)
 
     # 2번째
     x = LeakyConvBlock(x, filter_size=192, kernel_size=3)
     # x = LeakyMaxpoolBlock(x)
-    x = MaxPool2D()(x)
+    x = MaxPool2D(padding='same')(x)
 
     # 3번째
     x = LeakyConvBlock(x, filter_size=128, kernel_size=1)
@@ -54,14 +96,14 @@ def Yolov1Model():
     x = LeakyConvBlock(x, filter_size=256, kernel_size=1)
     x = LeakyConvBlock(x, filter_size=512, kernel_size=3)
     # x = LeakyMaxpoolBlock(x)
-    x = MaxPool2D()(x)
+    x = MaxPool2D(padding='same')(x)
 
     # 4번째
     x = QuadroLeakyConvBlock(x)
     x = LeakyConvBlock(x, filter_size=512, kernel_size=1)
     x = LeakyConvBlock(x, filter_size=1024, kernel_size=3)
     # x = LeakyMaxpoolBlock(x)
-    x = MaxPool2D()(x)
+    x = MaxPool2D(padding='same')(x)
 
     # 5번째
     x = DualLeakyConvBlock(x)
@@ -80,7 +122,9 @@ def Yolov1Model():
     # 8번째 (Output)
     x = Dense(1470)(x)
     # x = LeakyReLU(alpha=0.1)(x)
-    x = Reshape((7, 7, 30))(x)
+    # x = Reshape((7, 7, 30))(x)
+    # x = Lambda(lambda k: sigmoid(k))(x)
+    x = Yolo_Reshape((7, 7, 30))(x)
 
     model = Model(inputs, x)
     return model
@@ -173,9 +217,9 @@ def yolo_head(feats):
     22 ~ 29 (8)  -> predicted bounding boxes [x, y, w, h], [x, y, w, h]
 '''
 def Yolov1Loss(y_true, y_pred):
-    label_class = y_true[..., :20]      # ? * 7 * 7 * 20
-    label_box = y_true[..., 20:24]      # ? * 7 * 7 * 4
-    responsible_mask = y_true[..., 24]  # ? * 7 * 7
+    label_class = y_true[..., :20]       # ? * 7 * 7 * 20
+    label_box = y_true[..., 20:24]       # ? * 7 * 7 * 4
+    responsible_mask = y_true[..., 24]   # ? * 7 * 7
     responsible_mask = K.expand_dims(responsible_mask)  # ? * 7 * 7 * 1
 
     predict_class = y_pred[..., :20]  # ? * 7 * 7 * 20

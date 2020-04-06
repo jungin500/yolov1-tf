@@ -33,16 +33,16 @@ class Labeler():
 
 class Dataloader(utils.Sequence):
     DEFAULT_AUGMENTER = iaa.SomeOf(2, [
-    iaa.Multiply((1.2, 1.5)),  # change brightness, doesn't affect BBs
-    iaa.Affine(
-            translate_px={"x": 3, "y": 10},
-            scale=(0.9, 0.9)
-    ),  # translate by 40/60px on x/y axis, and scale to 50-70%, affects BBs
-    iaa.AdditiveGaussianNoise(scale=0.1 * 255),
-    iaa.CoarseDropout(0.02, size_percent=0.15, per_channel=0.5),
-    iaa.Affine(rotate=45),
-    iaa.Sharpen(alpha=0.5)
-])
+        iaa.Multiply((1.2, 1.5)),  # change brightness, doesn't affect BBs
+        iaa.Affine(
+                translate_px={"x": 3, "y": 10},
+                scale=(1.2, 1.2)
+        ),  # translate by 40/60px on x/y axis, and scale to 50-70%, affects BBs
+        iaa.AdditiveGaussianNoise(scale=0.1 * 255),
+        iaa.CoarseDropout(0.02, size_percent=0.15, per_channel=0.5),
+        # iaa.Affine(rotate=45),
+        iaa.Sharpen(alpha=0.5)
+    ])
 
     def __init__(self, file_name, dim=(448, 448, 3), batch_size=1, numClass=1, augmentation=False, shuffle=True):
         self.image_list, self.label_list = self.GetDataList(file_name)
@@ -151,6 +151,14 @@ class Dataloader(utils.Sequence):
 
             # raw_label은 x_1, y_1, x_2, y_2, c를 가지고 있다.
             label, raw_label = self.GetLabel(list_label_path[i], original_image.shape[0], original_image.shape[1])
+
+            '''
+                학습 전 Dataset 이미지 보여주기-!
+            '''
+            # iaa_bbs = self.__convert_yololabel_to_iaabbs(raw_label)
+            # drawn_image = (original_image * 255).astype(np.uint8)
+            # Image.fromarray(iaa_bbs.draw_on_image(drawn_image)).show()
+
             if self.augmenter:
                 iaa_bbs = self.__convert_yololabel_to_iaabbs(raw_label)
                 for aug_idx in range(self.augmenter_size - 1):
