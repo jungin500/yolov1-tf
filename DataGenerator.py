@@ -50,7 +50,6 @@ class Dataloader(utils.Sequence):
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.augmenter = self.DEFAULT_AUGMENTER if augmentation else False
-        self.augmenter_size = 4
         self.outSize = 5 + numClass
         self.labeler = Labeler('voc.names')
         self.on_epoch_end()
@@ -138,12 +137,8 @@ class Dataloader(utils.Sequence):
     def __data_generation(self, list_img_path, list_label_path):
         'Generates data containing batch_size samples'  # X : (n_samples, *dim, n_channels)
         # Initialization
-        if self.augmenter:
-            X = np.empty((self.batch_size * self.augmenter_size, *self.dim))
-            Y = np.empty((self.batch_size * self.augmenter_size, *(7, 7, 25)))
-        else:
-            X = np.empty((self.batch_size, *self.dim))
-            Y = np.empty((self.batch_size, *(7, 7, 25)))
+        X = np.empty((self.batch_size, *self.dim))
+        Y = np.empty((self.batch_size, *(7, 7, 25)))
 
         # Generate data
         for i, path in enumerate(list_img_path):
@@ -161,19 +156,15 @@ class Dataloader(utils.Sequence):
 
             if self.augmenter:
                 iaa_bbs = self.__convert_yololabel_to_iaabbs(raw_label)
-                for aug_idx in range(self.augmenter_size - 1):
-                    augmented_image, augmented_label = self.augmenter(
-                        image=(original_image * 255).astype(np.uint8),
-                        bounding_boxes=iaa_bbs
-                    )
-                    # test_augmented_items(augmented_image, augmented_label)
-                    X[aug_idx * self.batch_size + i,] = augmented_image / 255
-                    Y[aug_idx * self.batch_size + i,], augmented_raw_label = \
-                        self.__convert_iaabbs_to_yololabel(augmented_label.remove_out_of_image().clip_out_of_image())
 
-                # 마지막 items는 non-augmented images이다.
-                X[(self.augmenter_size - 1) * self.batch_size + i,] = original_image
-                Y[(self.augmenter_size - 1) * self.batch_size + i,] = label
+                augmented_image, augmented_label = self.augmenter(
+                    image=(original_image * 255).astype(np.uint8),
+                    bounding_boxes=iaa_bbs
+                )
+                # test_augmented_items(augmented_image, augmented_label)
+                X[i,] = augmented_image / 255
+                Y[i,], augmented_raw_label = \
+                    self.__convert_iaabbs_to_yololabel(augmented_label.remove_out_of_image().clip_out_of_image())
             else:
                 X[i,] = original_image
                 Y[i,] = label

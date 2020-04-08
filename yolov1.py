@@ -2,7 +2,8 @@ from tensorflow.keras import Model
 from tensorflow.keras.layers import Conv2D, MaxPool2D, GlobalAveragePooling2D, Dense, BatchNormalization, Input, \
     LeakyReLU, Reshape, Flatten, Lambda, Layer
 from tensorflow.keras.regularizers import l2
-
+import tensorflow as tf
+import sys
 
 def LeakyConvBlock(input, filter_size, kernel_size, strides=(1, 1)):
     x = Conv2D(
@@ -10,16 +11,15 @@ def LeakyConvBlock(input, filter_size, kernel_size, strides=(1, 1)):
         kernel_size=kernel_size,
         strides=strides,
         padding='same',
-        use_bias=False,               # 추가
-        kernel_regularizer=l2(5e-4),  # 추가
-        # activation=None,            # 삭제
+        activation=None,
     )(input)
     # x = BatchNormalization()(x)
     return LeakyReLU(alpha=0.1)(x)
 
 
 def LeakyMaxpoolBlock(input):
-    x = MaxPool2D(padding='same')(input)
+    # x = MaxPool2D(padding='same')(input)
+    x = MaxPool2D()(input)
     return LeakyReLU(alpha=0.1)(x)
 
 
@@ -55,27 +55,29 @@ class Yolo_Reshape(Layer):
         S = [self.target_shape[0], self.target_shape[1]]
         C = 20
         B = 2
-        idx1 = S[0] * S[1] * C
-        idx2 = idx1 + S[0] * S[1] * B
+        idx1 = S[0] * S[1] * C  # 7 * 7 * 20 = 980
+        idx2 = idx1 + S[0] * S[1] * B  # (980) + 7 * 7 * 2 = 980 + 98 = 1078
+
         # class prediction
-        class_probs = K.reshape(
-            inputs[:, :idx1], (K.shape(inputs)[0],) + tuple([S[0], S[1], C]))
+        # K.shape(inputs) -> (1, 1470)
+        class_probs = K.reshape(inputs[:, :idx1], (K.shape(inputs)[0], 7, 7, 20))
         class_probs = K.softmax(class_probs)
+
         # confidence
-        confs = K.reshape(
-            inputs[:, idx1:idx2], (K.shape(inputs)[0],) + tuple([S[0], S[1], B]))
+        confs = K.reshape(inputs[:, idx1:idx2], (K.shape(inputs)[0], 7, 7, 2))
         confs = K.sigmoid(confs)
+
         # boxes
-        boxes = K.reshape(
-            inputs[:, idx2:], (K.shape(inputs)[0],) + tuple([S[0], S[1], B * 4]))
+        boxes = K.reshape(inputs[:, idx2:], (K.shape(inputs)[0], 7, 7, 8))
         boxes = K.sigmoid(boxes)
+
         # return np.array([class_probs, confs, boxes])
         outputs = K.concatenate([class_probs, confs, boxes])
         return outputs
 
 
-
 INPUT_LAYER = Input(shape=(448, 448, 3))
+
 
 def Yolov1Model():
     inputs = INPUT_LAYER
@@ -122,9 +124,9 @@ def Yolov1Model():
     # 8번째 (Output)
     x = Dense(1470)(x)
     # x = LeakyReLU(alpha=0.1)(x)
-    # x = Reshape((7, 7, 30))(x)
+    x = Reshape((7, 7, 30))(x)
     # x = Lambda(lambda k: sigmoid(k))(x)
-    x = Yolo_Reshape((7, 7, 30))(x)
+    # x = Yolo_Reshape((7, 7, 30))(x)
 
     model = Model(inputs, x)
     return model
@@ -165,13 +167,13 @@ def yolo_head(feats):
     # In YOLO the height index is the inner most iteration.
     conv_height_index = K.arange(0, stop=conv_dims[0])
     conv_width_index = K.arange(0, stop=conv_dims[1])
-    conv_height_index = K.tile(conv_height_index, [conv_dims[1]]) # 늘어놓는 함수  tile -> 같은걸 N번 반복함
+    conv_height_index = K.tile(conv_height_index, [conv_dims[1]])  # 늘어놓는 함수  tile -> 같은걸 N번 반복함
     # 결과 -> 0~6, 0~6, ...., 0~6
 
     # TODO: Repeat_elements and tf.split doesn't support dynamic splits.
     # conv_width_index = K.repeat_elements(conv_width_index, conv_dims[1], axis=0)
     conv_width_index = K.tile(
-        K.expand_dims(conv_width_index, 0), [conv_dims[0], 1]) # tile을 [n, m] 쓰면 dims 2로 만들어줌
+        K.expand_dims(conv_width_index, 0), [conv_dims[0], 1])  # tile을 [n, m] 쓰면 dims 2로 만들어줌
     # 결과 -> [0~6], [0~6], [0~6], ...
 
     conv_width_index = K.flatten(K.transpose(conv_width_index))
@@ -216,10 +218,12 @@ def yolo_head(feats):
     20 ~ 21 (2)  -> predicted trust values (CONFIDENCE!!!)
     22 ~ 29 (8)  -> predicted bounding boxes [x, y, w, h], [x, y, w, h]
 '''
+
+
 def Yolov1Loss(y_true, y_pred):
-    label_class = y_true[..., :20]       # ? * 7 * 7 * 20
-    label_box = y_true[..., 20:24]       # ? * 7 * 7 * 4
-    responsible_mask = y_true[..., 24]   # ? * 7 * 7
+    label_class = y_true[..., :20]  # ? * 7 * 7 * 20
+    label_box = y_true[..., 20:24]  # ? * 7 * 7 * 4
+    responsible_mask = y_true[..., 24]  # ? * 7 * 7
     responsible_mask = K.expand_dims(responsible_mask)  # ? * 7 * 7 * 1
 
     predict_class = y_pred[..., :20]  # ? * 7 * 7 * 20
@@ -250,6 +254,9 @@ def Yolov1Loss(y_true, y_pred):
     # Loss 함수 3번 (without lambda_noobj)
     object_loss = box_mask * responsible_mask * K.square(1 - predict_bbox_confidences)
 
+    # tf.print("\n- no_object_loss:", K.sum(no_object_loss), output_stream=sys.stdout)
+    # tf.print("- object_loss:", K.sum(object_loss), output_stream=sys.stdout)
+
     confidence_loss = no_object_loss + object_loss
     confidence_loss = K.sum(confidence_loss)
 
@@ -271,12 +278,27 @@ def Yolov1Loss(y_true, y_pred):
     # Loss 함수 1번
     box_loss = 5 * box_mask * responsible_mask * K.square((label_xy - predict_xy) / 448)
 
+    # tf.print("- xy_loss:", K.sum(5 * box_mask * responsible_mask * K.square((label_xy - predict_xy) / 448)), output_stream=sys.stdout)
+
     # Loss 함수 2번
-    box_loss += 5 * box_mask * responsible_mask * K.square(K.sqrt(label_wh) - K.sqrt(predict_wh)) / 448
+    #box_loss += 5 * box_mask * responsible_mask * K.square(K.sqrt(label_wh/ 448) - K.sqrt(predict_wh/ 448))
+    wh_loss = 5 * box_mask * responsible_mask * K.square((label_wh / 448) - (predict_wh / 448))
+    box_loss += wh_loss
+
+    # box_loss = 5 * box_mask * responsible_mask * K.square((label_xy - predict_xy) / 448)
+    # box_loss += 5 * box_mask * responsible_mask * K.square((label_wh / 448) - (predict_wh / 448))
+    # box_loss = K.sum(box_loss)
+
+
+    # tf.print("- wh_loss:", K.sum(wh_loss),
+    #          output_stream=sys.stdout)
 
     # 1번+2번 총합
     box_loss = K.sum(box_loss)
 
     loss = confidence_loss + class_loss + box_loss
+    tf.print("\n- confidence_loss:", confidence_loss, output_stream=sys.stdout)
+    tf.print("- class_loss:", class_loss, output_stream=sys.stdout)
+    tf.print("- box_loss:", box_loss, output_stream=sys.stdout)
 
     return loss

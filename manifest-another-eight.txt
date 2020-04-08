@@ -1,0 +1,8 @@
+C:\Users\jungin500\Desktop\Study\2020-yolov1-impl\VOC2007\JPEGImages\002932.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov1-impl\VOC2007\JPEGImages\002933.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov1-impl\VOC2007\JPEGImages\002934.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov1-impl\VOC2007\JPEGImages\002935.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov1-impl\VOC2007\JPEGImages\002937.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov1-impl\VOC2007\JPEGImages\002938.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov1-impl\VOC2007\JPEGImages\002939.jpg
+C:\Users\jungin500\Desktop\Study\2020-yolov1-impl\VOC2007\JPEGImages\002940.jpg
